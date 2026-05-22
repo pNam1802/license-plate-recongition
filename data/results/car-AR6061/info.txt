@@ -1,0 +1,5 @@
+Biển số:    AR6061
+Track ID:   5
+Confidence: 0.941
+Frame:      146
+Thời gian:  2026-05-22 16:19:10

@@ -80,9 +80,9 @@ def is_valid_vn_plate(text: str) -> bool:
 def normalize_plate(text: str) -> str:
     """
     Chuẩn hóa chuỗi OCR: loại bỏ dấu, chuyển uppercase,
-    giữ lại chữ và số.
+    chỉ giữ lại ký tự ASCII chữ và số (loại bỏ chữ Hán, ký tự đặc biệt).
     """
-    return "".join(c for c in text.upper() if c.isalnum())
+    return "".join(c for c in text.upper() if c.isascii() and c.isalnum())
 
 
 # ---------------------------------------------------------------------------
@@ -142,12 +142,14 @@ class VoteManager:
         track_timeout: int   = 90,    # Số frame không xuất hiện thì xóa track
         ocr_interval:  int   = 5,     # Số frame giữa 2 lần OCR cho cùng 1 xe
         max_samples:   int   = 40,    # Số lần OCR tối đa trước khi bỏ qua xe
+        validate:      bool  = True,  # False = bỏ qua regex validation (test biển nước ngoài)
     ):
         self.min_votes     = min_votes
         self.vote_ratio    = vote_ratio
         self.track_timeout = track_timeout
         self.ocr_interval  = ocr_interval
         self.max_samples   = max_samples
+        self.validate      = validate
         self._records: Dict[int, TrackRecord] = defaultdict(TrackRecord)
 
     # ------------------------------------------------------------------
@@ -223,6 +225,16 @@ class VoteManager:
         record.last_seen_frame = frame_idx
 
         norm = normalize_plate(raw_text)
+
+        if not self.validate:
+            # Chế độ không validate: chấp nhận bất kỳ chuỗi ASCII nào có ≥4 ký tự
+            if norm and len(norm) >= 4:
+                record.history.append(norm)
+                record.conf_history.append(conf)
+            else:
+                print(f"    [SKIP] ID {track_id}: '{norm}' quá ngắn")
+            return
+
         if norm and is_valid_vn_plate(norm):
             record.history.append(norm)
             record.conf_history.append(conf)
@@ -341,15 +353,15 @@ class VoteManager:
 
     def cleanup(self, current_frame: int) -> List[int]:
         """
-        Xóa các track_id không xuất hiện trong `track_timeout` frames.
-        Track đã DONE với confirmed_plate được giữ lại mãi (không xóa).
+        Xóa các track_id chưa chốt và không xuất hiện trong `track_timeout` frames.
+        Track đã DONE không bị xóa (tránh mất dữ liệu đang hiển thị).
 
         Returns:
             Danh sách track_id đã bị xóa.
         """
         to_delete = [
             tid for tid, rec in self._records.items()
-            if rec.confirmed_plate is None   # chỉ xóa track chưa chốt
+            if rec.confirmed_plate is None
             and (current_frame - rec.last_seen_frame) > self.track_timeout
         ]
         for tid in to_delete:

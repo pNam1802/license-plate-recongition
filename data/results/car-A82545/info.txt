@@ -1,0 +1,5 @@
+Biển số:    A82545
+Track ID:   23
+Confidence: 0.951
+Frame:      464
+Thời gian:  2026-05-22 16:13:10

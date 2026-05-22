@@ -37,7 +37,7 @@ import numpy as np
 from pipeline.vehicle_detector import VehicleDetector
 from pipeline.plate_reader import PlateReader
 from pipeline.vote_logic import VoteManager, VehicleState, normalize_plate, is_valid_vn_plate
-from pipeline.zone_filter import ZoneFilter, MultiZoneFilter
+from pipeline.zone_filter import LineFilter
 
 
 # ---------------------------------------------------------------------------
@@ -46,18 +46,13 @@ from pipeline.zone_filter import ZoneFilter, MultiZoneFilter
 
 SKIP_FRAMES   = 2        # Xử lý 1 frame trong mỗi N frames
 MIN_AREA      = 4000     # Diện tích xe tối thiểu (px²)
-VEHICLE_CONF  = 0.40     # Confidence ngưỡng vehicle detection
+VEHICLE_CONF  = 0.35     # Confidence ngưỡng vehicle detection
 TRACK_TIMEOUT = 90       # Frames không thấy thì xóa track
-MIN_VOTES     = 2        # Số lần đọc tối thiểu để chốt biển số
-VOTE_RATIO    = 0.50     # Tỉ lệ đồng thuận để chốt
-OCR_INTERVAL  = 1        # Số frame giữa 2 lần OCR cho cùng 1 xe
-MAX_SAMPLES   = 40       # Số lần OCR tối đa trước khi bỏ qua xe
+MIN_VOTES     = 3        # Số lần đọc tối thiểu để chốt biển số
+VOTE_RATIO    = 0.55     # Tỉ lệ đồng thuận để chốt
+OCR_INTERVAL  = 3        # Số frame giữa 2 lần OCR cho cùng 1 xe (ảnh liên tiếp gần giống nhau)
+MAX_SAMPLES   = 30       # Số lần OCR tối đa trước khi bỏ qua xe
 RESULTS_DIR   = "data/results"
-
-# Zone of Interest — dải ngang nơi biển số rõ nhất
-# Đặt 0.0 / 1.0 để tắt hoàn toàn (toàn frame đều hợp lệ)
-ZONE_TOP      = 0.0      # % chiều cao frame (cạnh trên)
-ZONE_BOTTOM   = 1.0      # % chiều cao frame (cạnh dưới)
 
 # Màu sắc (BGR)
 COLOR_VEHICLE     = (0,   200, 50)    # Xanh lá — bounding box xe
@@ -98,6 +93,18 @@ def _draw_box_label(
 
     cv2.putText(frame, label, (x1 + 3, y1 - 4), FONT, 0.55, (0, 0, 0), 2)
     cv2.putText(frame, label, (x1 + 3, y1 - 4), FONT, 0.55, COLOR_WHITE, 1)
+
+
+def _draw_zone_counter(frame: np.ndarray, count: int) -> None:
+    """Vẽ bộ đếm xe đã vượt đường kẻ góc trên-trái."""
+    label = f"COUNT: {count}"
+    (tw, th), _ = cv2.getTextSize(label, FONT, 0.75, 2)
+    pad = 8
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (10, 10), (10 + tw + pad * 2, 10 + th + pad * 2), (10, 10, 10), -1)
+    cv2.addWeighted(overlay, 0.5, frame, 0.5, 0, frame)
+    cv2.putText(frame, label, (10 + pad, 10 + pad + th),
+                FONT, 0.75, (60, 230, 60), 2)
 
 
 def _draw_sidebar(
@@ -239,12 +246,14 @@ def save_result(
 
 def run_pipeline(
     source,
-    skip: int       = SKIP_FRAMES,
+    skip: int         = SKIP_FRAMES,
     vehicle_conf: float = VEHICLE_CONF,
-    min_area: int   = MIN_AREA,
-    min_votes: int  = MIN_VOTES,
+    min_area: int     = MIN_AREA,
+    min_votes: int    = MIN_VOTES,
     vote_ratio: float = VOTE_RATIO,
-    device: str     = "cpu",
+    device: str       = "cpu",
+    validate: bool    = True,
+    save_img: bool    = True,
 ):
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
@@ -259,32 +268,26 @@ def run_pipeline(
             min_area = min_area,
             device   = device,
         )
-        plate_reader = PlateReader(device=device)
+        plate_reader = PlateReader(device=device, validate=validate)
         vote_manager = VoteManager(
             min_votes     = min_votes,
             vote_ratio    = vote_ratio,
             track_timeout = TRACK_TIMEOUT,
             ocr_interval  = OCR_INTERVAL,
             max_samples   = MAX_SAMPLES,
+            validate      = validate,
         )
-        zones_json = "data/zones.json"
-        zone_json  = "data/zone.json"
-        if os.path.exists(zones_json):
-            with open(zones_json, encoding="utf-8") as _f:
+        if not validate:
+            print("[INFO] Chế độ: KHÔNG validate định dạng biển số (--no-validate)")
+        line_json = "data/line.json"
+        if os.path.exists(line_json):
+            with open(line_json, encoding="utf-8") as _f:
                 _cfg = json.load(_f)
-            zone_filter = MultiZoneFilter.from_config(_cfg)
-            n = len(zone_filter.zones)
-            names = ", ".join(zone_filter.names)
-            print(f"[INFO] Zones loaded: {zones_json}  ({n} zone: {names})")
-        elif os.path.exists(zone_json):
-            with open(zone_json, encoding="utf-8") as _f:
-                _cfg = json.load(_f)
-            zone_filter = ZoneFilter.from_config(_cfg)
-            pts = _cfg.get("points", [])
-            print(f"[INFO] Zone loaded: {zone_json}  ({len(pts)} điểm)")
+            line_filter = LineFilter.from_config(_cfg)
+            print(f"[INFO] Line loaded: {line_json}  P1={line_filter.p1}  P2={line_filter.p2}")
         else:
-            zone_filter = ZoneFilter(top_ratio=ZONE_TOP, bottom_ratio=ZONE_BOTTOM)
-            print(f"[INFO] Zone: toàn frame (chưa có data/zones.json — chạy tools/draw_zone.py để vẽ)")
+            line_filter = None
+            print("[INFO] Không có line (chạy tools/draw_line.py để vẽ) — xe sẽ không bị đếm")
     except FileNotFoundError as e:
         print(f"[LỖI] {e}")
         sys.exit(1)
@@ -322,6 +325,17 @@ def run_pipeline(
     cv2.resizeWindow(WIN, win_w, win_h)
     cv2.moveWindow(WIN, (sw - win_w) // 2, (sh - win_h) // 2)
 
+    # ---- Video writer ----
+    video_writer = None
+    if save_img:
+        os.makedirs(RESULTS_DIR, exist_ok=True)
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        out_path = os.path.join(RESULTS_DIR, f"output_{ts}.mp4")
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        src_fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        video_writer = cv2.VideoWriter(out_path, fourcc, src_fps / max(1, skip), (vw, vh))
+        print(f"[INFO] Lưu video output: {out_path}")
+
     # ---- Trạng thái ----
     fps_counter = FPSCounter()
     paused      = False
@@ -329,13 +343,18 @@ def run_pipeline(
     frame_idx   = 0
     last_annotated = None
 
-    # Cache: frame hiện tại đã xử lý
+    # Tích lũy toàn bộ biển số đã chốt trong session — không bao giờ tự xóa
+    session_confirmed: Dict[int, str] = {}
     confirmed_snapshot: Dict[int, str] = {}
 
     # Dedup: tránh lưu cùng biển số nhiều lần khi ByteTrack đổi ID
     # plate_text → frame_idx của lần chốt cuối cùng
     plate_last_confirmed: Dict[str, int] = {}
     DEDUP_FRAMES = 300  # bỏ qua nếu cùng biển đã chốt trong vòng 300 frame
+
+    # Zone counter: đếm xe đi vào zone (mỗi track_id chỉ đếm 1 lần)
+    zone_entered_ids: set = set()
+    zone_count: int = 0
 
     print("[INFO] Pipeline đang chạy...\n")
 
@@ -374,11 +393,17 @@ def run_pipeline(
             if removed:
                 for tid in removed:
                     print(f"  [TRACK] ID {tid} đã rời khỏi màn hình")
+                    if line_filter is not None:
+                        line_filter.remove_track(tid)
 
             annotated = frame.copy()
 
-            # Vẽ Zone of Interest
-            zone_filter.draw(annotated)
+            # Vẽ đường kẻ
+            if line_filter is not None:
+                line_filter.draw(annotated)
+
+            # Vẽ line counter góc trên-trái
+            _draw_zone_counter(annotated, zone_count)
 
             for v in vehicles:
                 vote_manager.update_seen(v.track_id, frame_idx)
@@ -404,21 +429,30 @@ def run_pipeline(
                     # Đã chốt — không làm gì thêm
                     continue
 
-                # Plate-direct mode: bỏ qua zone filter (toàn frame đều hợp lệ)
-                in_zone = plate_direct or zone_filter.is_in_zone(v.box, frame.shape)
+                # Luôn gọi check_crossing để cập nhật _prev_side (theo dõi vị trí)
+                crossed = (
+                    line_filter is not None
+                    and line_filter.check_crossing(v.track_id, v.box)
+                )
 
                 if state == VehicleState.DETECTING:
-                    # Chuyển sang SAMPLING khi xe vào zone
-                    if in_zone:
+                    if line_filter is None:
+                        # Không có line → bắt đầu OCR ngay
                         vote_manager.transition_to_sampling(v.track_id)
-                        # Cập nhật state ngay để có thể OCR trong frame này
                         state = vote_manager.get_state(v.track_id)
-
-                if state == VehicleState.SAMPLING:
-                    if not in_zone:
-                        # Xe tạm ra khỏi zone — bỏ qua frame này
+                    elif crossed:
+                        # Vượt đường → đếm + bắt đầu OCR
+                        if v.track_id not in zone_entered_ids:
+                            zone_entered_ids.add(v.track_id)
+                            zone_count += 1
+                            print(f"  [LINE] Xe #{v.track_id} vượt đường — tổng: {zone_count}")
+                        vote_manager.transition_to_sampling(v.track_id)
+                        state = vote_manager.get_state(v.track_id)
+                    else:
+                        # Chưa vượt đường → chờ, không OCR
                         continue
 
+                if state == VehicleState.SAMPLING:
                     # ---- Per-vehicle sampling rate control ----
                     # Plate-direct mode: OCR mỗi frame vì xe qua nhanh
                     if not plate_direct and not vote_manager.should_run_ocr(v.track_id, frame_idx):
@@ -451,6 +485,7 @@ def run_pipeline(
                     )
 
                     if confirmed:
+                        session_confirmed[v.track_id] = confirmed
                         last_frame = plate_last_confirmed.get(confirmed, -DEDUP_FRAMES - 1)
                         is_dup = (frame_idx - last_frame) <= DEDUP_FRAMES
                         print(
@@ -489,7 +524,7 @@ def run_pipeline(
                         )
 
             # Cập nhật confirmed snapshot
-            confirmed_snapshot = vote_manager.all_confirmed()
+            confirmed_snapshot = session_confirmed
 
             # FPS
             fps_counter.tick()
@@ -505,6 +540,8 @@ def run_pipeline(
 
             last_annotated = canvas
             cv2.imshow(WIN, canvas)
+            if video_writer is not None:
+                video_writer.write(annotated)
 
         else:
             # Đang pause: hiển thị frame dừng
@@ -544,11 +581,18 @@ def run_pipeline(
             vehicle_detector.reset()
             vote_manager._records.clear()
             confirmed_snapshot.clear()
+            zone_entered_ids.clear()
+            zone_count = 0
+            session_confirmed.clear()
+            confirmed_snapshot.clear()
             frame_idx = 0
-            print("[INFO] Đã reset tracker và voting data")
+            print("[INFO] Đã reset tracker, voting data và zone counter")
 
     # ---- Cleanup ----
     cap.release()
+    if video_writer is not None:
+        video_writer.release()
+        print(f"[INFO] Video đã lưu: {out_path}")
     cv2.destroyAllWindows()
 
     print("\n" + "="*55)
@@ -630,18 +674,32 @@ Ví dụ:
         choices=["cpu", "cuda", "0"],
         help="Thiết bị tính toán (default: cpu)",
     )
+    parser.add_argument(
+        "--no-validate",
+        action="store_true",
+        help="Bỏ qua regex validation biển số VN — dùng khi test biển nước ngoài",
+    )
+    parser.add_argument(
+        "--save-img",
+        type=lambda x: x.lower() not in ("false", "0", "no"),
+        default=True,
+        metavar="True|False",
+        help="Lưu video output vào data/results/ (default: True)",
+    )
 
     args = parser.parse_args()
     source = _parse_source(args.source)
 
     run_pipeline(
-        source     = source,
-        skip       = args.skip,
+        source       = source,
+        skip         = args.skip,
         vehicle_conf = args.conf,
-        min_area   = args.min_area,
-        min_votes  = args.min_votes,
-        vote_ratio = args.vote_ratio,
-        device     = args.device,
+        min_area     = args.min_area,
+        min_votes    = args.min_votes,
+        vote_ratio   = args.vote_ratio,
+        device       = args.device,
+        validate     = not args.no_validate,
+        save_img     = args.save_img,
     )
 
 

@@ -1,0 +1,5 @@
+Biển số:    AE6705
+Track ID:   21
+Confidence: 0.934
+Frame:      306
+Thời gian:  2026-05-22 16:19:25

@@ -29,7 +29,7 @@ VEHICLE_CLASS_IDS = {
 
 DEFAULT_CONF       = 0.40   # Ngưỡng confidence tối thiểu
 DEFAULT_MIN_AREA   = 4000   # Diện tích bbox tối thiểu (px²) — loại xe ở quá xa
-DEFAULT_IOU        = 0.45   # IOU threshold cho NMS
+DEFAULT_IOU        = 0.45  # IOU threshold cho NMS
 
 
 # ---------------------------------------------------------------------------

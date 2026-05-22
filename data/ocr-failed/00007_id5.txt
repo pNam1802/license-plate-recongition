@@ -1,8 +1,0 @@
-Track ID:   5
-Thời gian:  2026-05-22 13:29:55
-OCR text: 9K10425
-Kich thuoc: 55x50px
-H/W ratio: 0.91
-Plate det conf: 0.90
-2-line OCR: True
-OCR conf: 0.43

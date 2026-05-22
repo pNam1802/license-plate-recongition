@@ -43,7 +43,7 @@ def _save_ocr_failed(plate_crop: np.ndarray, track_id: int, info: dict) -> str:
 # ---------------------------------------------------------------------------
 
 PLATE_MODEL_PATH = "models/plate-detect.pt"
-PLATE_CONF       = 0.25          # Ngưỡng confidence phát hiện biển số
+PLATE_CONF       = 0.20          # Ngưỡng confidence phát hiện biển số
 PLATE_OUT_W      = 300           # Chiều rộng output sau warpPerspective
 PLATE_OUT_H      = 100           # Chiều cao output sau warpPerspective
 MIN_PLATE_AREA   = 500           # Diện tích biển số tối thiểu (px²)
@@ -217,6 +217,7 @@ class PlateReader:
         plate_model_path: str = PLATE_MODEL_PATH,
         plate_conf: float     = PLATE_CONF,
         device: str           = "cpu",
+        validate: bool        = True,
     ):
         from ultralytics import YOLO
 
@@ -228,6 +229,7 @@ class PlateReader:
         self.plate_model = YOLO(plate_model_path)
         self.plate_conf  = plate_conf
         self.device      = device
+        self.validate    = validate
 
         print(f"[PlateReader] Plate model: {plate_model_path}")
 
@@ -266,7 +268,7 @@ class PlateReader:
             frame,
             tracker  = "bytetrack.yaml",
             persist  = True,
-            conf     = 0.35,
+            conf     = self.plate_conf,
             verbose  = False,
         )
         if not results or results[0].boxes is None:
@@ -320,7 +322,7 @@ class PlateReader:
 
         text, ocr_conf = self._ocr_two_line(plate_crop) if two_line else self._ocr_plate(plate_crop)
         print(f"  [OCR-RESULT]    ID {track_id}: '{text}'  conf={ocr_conf:.2f}")
-        if not is_valid_vn_plate(normalize_plate(text or "")):
+        if self.validate and not is_valid_vn_plate(normalize_plate(text or "")):
             stem = _save_ocr_failed(plate_crop, track_id, {
                 "OCR text":   text or "Unknown",
                 "Kich thuoc": f"{pw}x{ph}px",
@@ -373,7 +375,7 @@ class PlateReader:
         text, ocr_conf = self._ocr_two_line(plate_crop) if two_line else self._ocr_plate(plate_crop)
         abs_box = (vx1 + px1, vy1 + py1, vx1 + px2, vy1 + py2)
         print(f"  [OCR-RESULT]    ID {track_id}: '{text}'  conf={ocr_conf:.2f}")
-        if not is_valid_vn_plate(normalize_plate(text or "")):
+        if self.validate and not is_valid_vn_plate(normalize_plate(text or "")):
             stem = _save_ocr_failed(plate_crop, track_id, {
                 "OCR text":       text or "Unknown",
                 "Kich thuoc":     f"{pw}x{ph}px",
@@ -419,12 +421,16 @@ class PlateReader:
         for box in results[0].boxes:
             x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
             conf  = float(box.conf[0])
-            area  = (x2 - x1) * (y2 - y1)
-            
-            # Bỏ qua MIN_PLATE_AREA để debug xem có tìm thấy biển quá nhỏ không
-            # if area < MIN_PLATE_AREA:
-            #     continue
-            
+            w, h  = x2 - x1, y2 - y1
+            area  = w * h
+
+            if area < MIN_PLATE_AREA:
+                continue
+
+            # Biển số luôn rộng hơn cao (W/H >= 1.5) — loại đèn xe, gương chiếu hậu
+            if h == 0 or (w / h) < 1.5:
+                continue
+
             if area > best_area:
                 best_area = area
                 best = (x1, y1, x2, y2, conf)
@@ -453,7 +459,7 @@ class PlateReader:
             t = r.get("rec_text", "")
             c = r.get("rec_score", 0.0)
             if t:
-                clean = "".join(ch for ch in t if ch.isalnum()).upper().strip()
+                clean = "".join(ch for ch in t if ch.isascii() and ch.isalnum()).upper().strip()
                 if clean:
                     texts.append(clean)
                     confs.append(float(c))

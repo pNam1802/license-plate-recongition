@@ -28,7 +28,7 @@ Cách dùng:
     frame = zf.draw(frame)
 """
 
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -230,3 +230,119 @@ class MultiZoneFilter:
             zones.append(ZoneFilter.from_config(z))
             names.append(z.get("name", f"Zone {len(zones)}"))
         return cls(zones, names)
+
+
+class LineFilter:
+    """
+    Đường kẻ ảo (virtual tripwire) để đếm xe đi qua theo một chiều.
+
+    entry_side: chiều xe được tính vào count.
+      +1  → xe xuất phát từ phía +1 (phải/dưới tùy góc) vượt sang phía -1
+      -1  → xe xuất phát từ phía -1 (trái/trên tùy góc) vượt sang phía +1
+       0  → đếm cả 2 chiều (mặc định cũ)
+
+    data/line.json format:
+        {"type": "line", "p1": [x1,y1], "p2": [x2,y2], "entry_side": 1}
+    """
+
+    COLOR       = (0, 200, 255)
+    COLOR_ENTRY = (0, 255, 80)    # Xanh lá — mũi tên chiều vào
+
+    def __init__(
+        self,
+        p1: Tuple[int, int],
+        p2: Tuple[int, int],
+        entry_side: int = 0,
+    ):
+        self.p1          = p1
+        self.p2          = p2
+        self.entry_side  = entry_side   # +1 / -1 / 0
+        self._prev_side: Dict[int, int] = {}
+
+    # ------------------------------------------------------------------
+
+    def _side(self, cx: int, cy: int) -> int:
+        """Dấu cross product: +1 (phải/dưới P1→P2) / -1 (trái/trên) / 0."""
+        val = (self.p2[0] - self.p1[0]) * (cy - self.p1[1]) \
+            - (self.p2[1] - self.p1[1]) * (cx - self.p1[0])
+        if val > 0:
+            return 1
+        if val < 0:
+            return -1
+        return 0
+
+    def check_crossing(
+        self,
+        track_id: int,
+        box: Tuple[int, int, int, int],
+    ) -> bool:
+        """
+        True nếu xe vừa vượt qua đường theo đúng chiều entry_side.
+        entry_side=0 → chấp nhận cả 2 chiều.
+        """
+        cx = (box[0] + box[2]) // 2
+        cy = (box[1] + box[3]) // 2
+        side = self._side(cx, cy)
+
+        prev = self._prev_side.get(track_id)
+        self._prev_side[track_id] = side
+
+        if prev is None or side == 0 or prev == 0:
+            return False
+        if prev == side:
+            return False
+
+        # Crossed — kiểm tra chiều
+        if self.entry_side == 0:
+            return True
+        # entry_side=+1: xe xuất phát từ +1 sang -1
+        return prev == self.entry_side
+
+    def draw(self, frame: np.ndarray) -> np.ndarray:
+        """Vẽ đường kẻ + mũi tên chỉ chiều vào."""
+        import math
+
+        cv2.line(frame, self.p1, self.p2, self.COLOR, 3)
+        cv2.circle(frame, self.p1, 6, self.COLOR, -1)
+        cv2.circle(frame, self.p2, 6, self.COLOR, -1)
+
+        # Vector pháp tuyến (pointing to +1 side)
+        dx = self.p2[0] - self.p1[0]
+        dy = self.p2[1] - self.p1[1]
+        length = math.sqrt(dx * dx + dy * dy) or 1.0
+        nx = -dy / length
+        ny =  dx / length
+
+        mx = (self.p1[0] + self.p2[0]) // 2
+        my = (self.p1[1] + self.p2[1]) // 2
+
+        if self.entry_side != 0:
+            # Mũi tên: từ phía entry_side → vượt qua đường
+            off = 55
+            ax1 = int(mx + nx * self.entry_side * off)
+            ay1 = int(my + ny * self.entry_side * off)
+            ax2 = int(mx - nx * self.entry_side * 15)
+            ay2 = int(my - ny * self.entry_side * 15)
+            cv2.arrowedLine(frame, (ax1, ay1), (ax2, ay2),
+                            self.COLOR_ENTRY, 3, tipLength=0.35)
+            # Chữ "VÀO" bên cạnh mũi tên
+            lx = int(mx + nx * self.entry_side * (off + 18))
+            ly = int(my + ny * self.entry_side * (off + 18))
+            cv2.putText(frame, "VAO", (lx - 18, ly + 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, self.COLOR_ENTRY, 2)
+        else:
+            cv2.putText(frame, "LINE", (mx - 20, my - 12),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, self.COLOR, 2)
+
+        return frame
+
+    def remove_track(self, track_id: int) -> None:
+        self._prev_side.pop(track_id, None)
+
+    @classmethod
+    def from_config(cls, config: dict) -> "LineFilter":
+        return cls(
+            p1         = tuple(config["p1"]),
+            p2         = tuple(config["p2"]),
+            entry_side = config.get("entry_side", 0),
+        )

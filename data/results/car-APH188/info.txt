@@ -1,0 +1,5 @@
+Biển số:    APH188
+Track ID:   22
+Confidence: 0.886
+Frame:      488
+Thời gian:  2026-05-22 16:19:40

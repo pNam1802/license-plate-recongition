@@ -1,5 +1,0 @@
-Biển số:    29K10425
-Track ID:   6
-Confidence: 0.919
-Frame:      280
-Thời gian:  2026-05-22 11:48:04

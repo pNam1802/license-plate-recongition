@@ -1,5 +1,0 @@
-Biển số:    23K10425
-Track ID:   5
-Confidence: 0.394
-Frame:      254
-Thời gian:  2026-05-22 13:29:57

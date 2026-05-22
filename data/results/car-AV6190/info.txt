@@ -1,0 +1,5 @@
+Biển số:    AV6190
+Track ID:   32
+Confidence: 0.934
+Frame:      694
+Thời gian:  2026-05-22 16:20:01
