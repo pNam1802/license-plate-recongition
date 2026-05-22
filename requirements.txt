@@ -1,0 +1,23 @@
+# === Web UI ===
+streamlit>=1.30
+streamlit-drawable-canvas>=0.9
+
+# === Core Detection & Tracking ===
+ultralytics>=8.0        # YOLOv8 + ByteTrack (built-in)
+huggingface_hub         # Tự tải model nếu chưa có
+opencv-python>=4.5      # Xử lý ảnh, warpPerspective
+torch>=1.12             # Backend PyTorch cho YOLO
+numpy
+
+# === OCR ===
+paddlepaddle            # Backend PaddleOCR (CPU)
+paddleocr               # PaddleOCR engine
+# Nếu dùng GPU: pip install paddlepaddle-gpu thay cho paddlepaddle
+
+# === Legacy (plate_detector.py dùng ảnh đơn) ===
+easyocr
+
+# === Cài đặt theo thứ tự để tránh conflict ===
+# pip install paddlepaddle paddleocr
+# pip install ultralytics huggingface_hub
+# pip install opencv-python --force-reinstall
