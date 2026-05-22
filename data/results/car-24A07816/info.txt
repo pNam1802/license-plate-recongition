@@ -1,5 +1,5 @@
 Biển số:    24A07816
 Track ID:   1
-Confidence: 0.997
-Frame:      60
-Thời gian:  2026-05-22 11:47:46
+Confidence: 0.988
+Frame:      72
+Thời gian:  2026-05-22 13:22:57

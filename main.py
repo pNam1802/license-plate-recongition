@@ -37,7 +37,7 @@ import numpy as np
 from pipeline.vehicle_detector import VehicleDetector
 from pipeline.plate_reader import PlateReader
 from pipeline.vote_logic import VoteManager, VehicleState, normalize_plate, is_valid_vn_plate
-from pipeline.zone_filter import ZoneFilter
+from pipeline.zone_filter import ZoneFilter, MultiZoneFilter
 
 
 # ---------------------------------------------------------------------------
@@ -108,60 +108,66 @@ def _draw_sidebar(
     paused: bool,
 ) -> np.ndarray:
     """
-    Vẽ sidebar bên phải hiển thị kết quả biển số đã chốt.
-    Trả về frame đã có sidebar.
+    Vẽ panel kết quả dạng overlay trong suốt góc trên-phải của frame.
     """
-    SIDEBAR_W = 260
+    PANEL_W   = 300
+    PANEL_PAD = 12
+    LINE_H    = 32   # khoảng cách dòng (chữ to hơn)
+    FONT_SCALE_TITLE  = 0.75
+    FONT_SCALE_RESULT = 0.72
+    FONT_SCALE_INFO   = 0.55
+    COLOR_RESULT = (60, 230, 60)    # xanh lá sáng
+    COLOR_TITLE  = (60, 230, 60)
+    COLOR_INFO   = (140, 220, 140)  # xanh lá nhạt
+
     h, w = frame.shape[:2]
+    canvas = frame.copy()
 
-    # Tạo canvas mới rộng hơn để ghép sidebar
-    canvas = np.zeros((h, w + SIDEBAR_W, 3), dtype=np.uint8)
-    canvas[:, :w] = frame
+    # Tính chiều cao panel theo số dòng kết quả
+    n_results = max(1, len(confirmed))
+    n_rows    = min(n_results, 10)
+    panel_h   = PANEL_PAD + 30 + 24 + 8 + LINE_H * n_rows + PANEL_PAD
 
-    # Nền sidebar
-    sidebar = canvas[:, w:]
-    sidebar[:] = COLOR_PANEL_BG
+    x0 = w - PANEL_W - 10
+    y0 = 10
+    x1 = w - 10
+    y1 = y0 + panel_h
 
-    # Đường phân cách
-    cv2.line(canvas, (w, 0), (w, h), COLOR_ACCENT, 1)
+    # Nền trong suốt
+    overlay = canvas.copy()
+    cv2.rectangle(overlay, (x0, y0), (x1, y1), (10, 10, 10), -1)
+    cv2.addWeighted(overlay, 0.45, canvas, 0.55, 0, canvas)
 
-    x = w + 10
-    y = 30
+    # Viền mỏng
+    cv2.rectangle(canvas, (x0, y0), (x1, y1), COLOR_TITLE, 1)
+
+    x = x0 + PANEL_PAD
+    y = y0 + PANEL_PAD + 18
 
     # Tiêu đề
-    cv2.putText(canvas, "RESULTS", (x, y), FONT, 0.65, COLOR_ACCENT, 2)
-    y += 5
-    cv2.line(canvas, (x, y), (x + SIDEBAR_W - 20, y), COLOR_ACCENT, 1)
-    y += 20
+    cv2.putText(canvas, "RESULTS", (x, y), FONT, FONT_SCALE_TITLE, COLOR_TITLE, 2)
+    y += 6
+    cv2.line(canvas, (x, y), (x1 - PANEL_PAD, y), COLOR_TITLE, 1)
+    y += 22
 
-    # FPS + Frame
-    status = "PAUSED" if paused else f"FPS: {fps:.1f}"
-    status_color = (0, 100, 255) if paused else (100, 255, 100)
-    cv2.putText(canvas, status, (x, y), FONT, 0.5, status_color, 1)
-    y += 18
-    cv2.putText(canvas, f"Frame: {frame_idx:>6}", (x, y), FONT, 0.45, COLOR_GRAY, 1)
-    y += 25
-
-    cv2.line(canvas, (x, y), (x + SIDEBAR_W - 20, y), (50, 50, 50), 1)
-    y += 15
-
-    # Bảng kết quả
-    cv2.putText(canvas, "ID    PLATE", (x, y), FONT, 0.45, COLOR_GRAY, 1)
-    y += 18
-
-    if not confirmed:
-        cv2.putText(canvas, "Chua co ket qua...", (x, y), FONT, 0.42, COLOR_GRAY, 1)
+    # FPS
+    if paused:
+        cv2.putText(canvas, "[ PAUSED ]", (x, y), FONT, FONT_SCALE_INFO, (60, 120, 255), 1)
     else:
-        for tid, plate in list(confirmed.items())[-12:]:  # hiển thị tối đa 12 dòng
-            line_txt = f"#{tid:<4}  {plate}"
-            cv2.putText(canvas, line_txt, (x, y), FONT, 0.5, COLOR_CONFIRMED, 1)
-            y += 22
-            if y > h - 30:
-                break
+        cv2.putText(canvas, f"FPS: {fps:.1f}   Frame: {frame_idx}", (x, y),
+                    FONT, FONT_SCALE_INFO, COLOR_INFO, 1)
+    y += LINE_H - 4
 
-    # Footer
-    cv2.putText(canvas, "q=thoat p=pause f=full s=save r=reset",
-                (x, h - 15), FONT, 0.32, (80, 80, 80), 1)
+    # Danh sách kết quả
+    if not confirmed:
+        cv2.putText(canvas, "Chua co ket qua...", (x, y), FONT, FONT_SCALE_INFO, COLOR_INFO, 1)
+    else:
+        for tid, plate in list(confirmed.items())[-10:]:
+            cv2.putText(canvas, f"#{tid:<3} {plate}", (x, y), FONT, FONT_SCALE_RESULT,
+                        COLOR_RESULT, 2)
+            y += LINE_H
+            if y > y1 - PANEL_PAD:
+                break
 
     return canvas
 
@@ -261,8 +267,16 @@ def run_pipeline(
             ocr_interval  = OCR_INTERVAL,
             max_samples   = MAX_SAMPLES,
         )
-        zone_json = "data/zone.json"
-        if os.path.exists(zone_json):
+        zones_json = "data/zones.json"
+        zone_json  = "data/zone.json"
+        if os.path.exists(zones_json):
+            with open(zones_json, encoding="utf-8") as _f:
+                _cfg = json.load(_f)
+            zone_filter = MultiZoneFilter.from_config(_cfg)
+            n = len(zone_filter.zones)
+            names = ", ".join(zone_filter.names)
+            print(f"[INFO] Zones loaded: {zones_json}  ({n} zone: {names})")
+        elif os.path.exists(zone_json):
             with open(zone_json, encoding="utf-8") as _f:
                 _cfg = json.load(_f)
             zone_filter = ZoneFilter.from_config(_cfg)
@@ -270,7 +284,7 @@ def run_pipeline(
             print(f"[INFO] Zone loaded: {zone_json}  ({len(pts)} điểm)")
         else:
             zone_filter = ZoneFilter(top_ratio=ZONE_TOP, bottom_ratio=ZONE_BOTTOM)
-            print(f"[INFO] Zone: toàn frame (chưa có data/zone.json — chạy tools/draw_zone.py để vẽ)")
+            print(f"[INFO] Zone: toàn frame (chưa có data/zones.json — chạy tools/draw_zone.py để vẽ)")
     except FileNotFoundError as e:
         print(f"[LỖI] {e}")
         sys.exit(1)
@@ -299,10 +313,9 @@ def run_pipeline(
 
     vw = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))  or 1280
     vh = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 720
-    SIDEBAR_W = 260
-    scale     = min(sw * 0.85 / (vw + SIDEBAR_W), sh * 0.85 / vh)
-    win_w     = int((vw + SIDEBAR_W) * scale)
-    win_h     = int(vh * scale)
+    scale = min(sw * 0.85 / vw, sh * 0.85 / vh)
+    win_w = int(vw * scale)
+    win_h = int(vh * scale)
 
     WIN = "License Plate Recognition"
     cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)

@@ -17,6 +17,9 @@ Cách dùng:
     # Dùng polygon
     zf = ZoneFilter(polygon=[(100,200), (800,200), (900,500), (50,500)])
 
+    # Dùng nhiều zones (từ draw_zone.py mới)
+    mzf = MultiZoneFilter.from_config({"version": 2, "zones": [...]})
+
     # Kiểm tra xe có trong zone không
     if zf.is_in_zone(vehicle_box, frame.shape):
         ...
@@ -100,6 +103,7 @@ class ZoneFilter:
         color: Tuple[int, int, int] = (0, 200, 255),
         alpha: float = 0.15,
         label: bool  = True,
+        label_text: str = "ZONE",
     ) -> np.ndarray:
         """
         Vẽ Zone of Interest lên frame (overlay bán trong suốt).
@@ -129,7 +133,7 @@ class ZoneFilter:
                     ly = int(M["m01"] / M["m00"])
                 else:
                     lx, ly = self._poly_np[0]
-                cv2.putText(frame, "ZONE", (lx - 25, ly),
+                cv2.putText(frame, label_text, (lx - 25, ly),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
         else:
             # Không vẽ gì nếu zone phủ toàn frame (đã tắt zone)
@@ -142,7 +146,7 @@ class ZoneFilter:
             cv2.line(frame, (0, top),    (w, top),    color, 2)
             cv2.line(frame, (0, bottom), (w, bottom), color, 2)
             if label:
-                cv2.putText(frame, "ZONE", (10, top + 20),
+                cv2.putText(frame, label_text, (10, top + 20),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
         return frame
@@ -165,3 +169,64 @@ class ZoneFilter:
                 top_ratio    = config.get("top",    0.25),
                 bottom_ratio = config.get("bottom", 0.80),
             )
+
+
+class MultiZoneFilter:
+    """
+    Bộ lọc nhiều Zone of Interest — xe trong bất kỳ zone nào đều được xử lý.
+
+    Dùng khi camera phủ nhiều làn / nhiều vùng độc lập.
+    """
+
+    # Màu BGR cho từng zone
+    COLORS: List[Tuple[int, int, int]] = [
+        (0, 200, 255),   # Vàng     — Zone 1
+        (0, 255, 100),   # Xanh lá  — Zone 2
+        (255, 100, 0),   # Cam      — Zone 3
+        (200, 0, 255),   # Tím      — Zone 4
+    ]
+
+    def __init__(
+        self,
+        zones: List[ZoneFilter],
+        names: Optional[List[str]] = None,
+    ):
+        self.zones = zones
+        self.names = names or [f"Zone {i + 1}" for i in range(len(zones))]
+
+    def is_in_zone(
+        self,
+        vehicle_box: Tuple[int, int, int, int],
+        frame_shape: Tuple[int, int, int],
+    ) -> bool:
+        """Trả về True nếu xe nằm trong BẤT KỲ zone nào."""
+        return any(z.is_in_zone(vehicle_box, frame_shape) for z in self.zones)
+
+    def draw(self, frame: np.ndarray) -> np.ndarray:
+        """Vẽ tất cả zones lên frame, mỗi zone một màu khác nhau."""
+        for i, (zone, name) in enumerate(zip(self.zones, self.names)):
+            color = self.COLORS[i % len(self.COLORS)]
+            zone.draw(frame, color=color, label=True, label_text=name)
+        return frame
+
+    @classmethod
+    def from_config(cls, config: dict) -> "MultiZoneFilter":
+        """
+        Tạo MultiZoneFilter từ dict config của data/zones.json.
+
+        Config format (version 2):
+            {
+              "version": 2,
+              "zones": [
+                {"name": "Zone 1", "type": "polygon", "points": [...]},
+                {"name": "Zone 2", "type": "polygon", "points": [...]}
+              ]
+            }
+        """
+        zones_cfg = config.get("zones", [])
+        zones = []
+        names = []
+        for z in zones_cfg:
+            zones.append(ZoneFilter.from_config(z))
+            names.append(z.get("name", f"Zone {len(zones)}"))
+        return cls(zones, names)

@@ -1,0 +1,5 @@
+Biển số:    24A16033
+Track ID:   105
+Confidence: 0.949
+Frame:      2108
+Thời gian:  2026-05-22 13:21:27

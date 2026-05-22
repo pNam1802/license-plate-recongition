@@ -1,8 +1,0 @@
-Track ID:   17
-Thời gian:  2026-05-22 11:22:01
-OCR text: 24581133975
-Kich thuoc: 39x27px
-H/W ratio: 0.69
-Plate det conf: 0.95
-2-line OCR: True
-OCR conf: 0.80

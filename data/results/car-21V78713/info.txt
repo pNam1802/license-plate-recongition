@@ -1,0 +1,5 @@
+Biển số:    21V78713
+Track ID:   119
+Confidence: 0.985
+Frame:      2232
+Thời gian:  2026-05-22 13:21:41
